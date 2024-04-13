@@ -14,8 +14,14 @@ mod stepping;
 const PADDLE_SPEED: f32 = 500.0;
 
 // We set the z-value of the ball to 1 so it renders on top in the case of overlapping sprites.
-const BALL_DIAMETER: f32 = 30.;
+const BALL_DIAMETER: f32 = 1.;
 const BALL_SPEED: f32 = 400.0;
+
+// Small meteor dimensions
+const SMALL_METEOR_WIDTH: f32 = 108.;
+const SMALL_METEOR_HEIGHT: f32 = 92.;
+const SMALL_METEOR_VEC: Vec2 = Vec2::new(SMALL_METEOR_WIDTH, SMALL_METEOR_HEIGHT);
+const SMALL_METEOR_SCALE: f32 = 0.5;
 
 // x coordinates
 const LEFT_WALL: f32 = -450.;
@@ -52,6 +58,7 @@ fn main() {
             Update,
             (move_player, apply_velocity, check_for_collisions).chain(),
         )
+        .add_systems(Update, animate_sprite)
         .add_systems(Update, (update_scoreboard, bevy::window::close_on_esc))
         .run();
 }
@@ -78,10 +85,25 @@ struct CollisionEvent;
 #[derive(Resource)]
 struct Difficulty(f64);
 
+#[derive(Resource)]
+struct MeteorSmall(Handle<Image>);
+
 // This resource tracks the game's score
 #[derive(Resource)]
 struct Scoreboard {
     score: usize,
+}
+
+#[derive(Component, Deref, DerefMut)]
+struct AnimationTimer(Timer);
+
+fn animate_sprite(time: Res<Time>, mut query: Query<(&mut AnimationTimer, &mut TextureAtlas)>) {
+    for (mut timer, mut atlas) in &mut query {
+        timer.tick(time.delta());
+        if timer.just_finished() {
+            atlas.index = if atlas.index == 5 { 1 } else { atlas.index + 1 };
+        }
+    }
 }
 
 #[derive(Component)]
@@ -116,36 +138,29 @@ fn setup(
     // Camera
     commands.spawn(Camera2dBundle::default());
 
-    let player_texture = asset_server.load("Player.png");
-    let atlas_layout = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
-        Vec2::new(100., 100.),
-        3,
-        3,
-        Some(Vec2::new(10., 10.)),
-        None,
-    ));
+    // let player_texture = asset_server.load("Player2.png");
+
+    // let atlas_layout = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
+    //     Vec2::new(200., 200.),
+    //     5,
+    //     1,
+    //     Some(Vec2::new(75., 0.)),
+    //     Some(Vec2::new(50., 0.)),
+    // ));
 
     // 140 from left side
     // Start at 1% chance of spawning meteor
     commands.insert_resource(Difficulty(0.1));
+    commands.insert_resource(MeteorSmall(asset_server.load("spr_meteor_small.png")));
 
     commands.spawn((Player, RngComponent::from(&mut rng)));
 
     commands.spawn((
-        SpriteSheetBundle {
+        SpriteBundle {
             transform: Transform {
-                translation: Vec3::new(0.0, bottom(window.single()), 0.0),
-                scale: Vec3 {
-                    x: 100.,
-                    y: 100.,
-                    z: 0.,
-                },
+                translation: Vec3::new(0.0, bottom(window.single()) + 10., 0.0),
+                scale: Vec3::new(100., 100., 0.),
                 ..default()
-            },
-            texture: player_texture,
-            atlas: TextureAtlas {
-                layout: atlas_layout,
-                index: 6,
             },
             sprite: Sprite {
                 color: PADDLE_COLOR,
@@ -153,6 +168,28 @@ fn setup(
             },
             ..default()
         },
+        // SpriteSheetBundle {
+        //     transform: Transform {
+        //         translation: Vec3::new(0.0, bottom(window.single()) + 100.0, 0.0),
+        //         scale: Vec3 {
+        //             x: 1.,
+        //             y: 1.,
+        //             z: 0.,
+        //         },
+        //         ..default()
+        //     },
+        //     texture: player_texture,
+        //     atlas: TextureAtlas {
+        //         layout: atlas_layout,
+        //         index: 1,
+        //     },
+            // sprite: Sprite {
+            //     color: PADDLE_COLOR,
+            //     ..default()
+            // },
+            //..default()
+        //},
+        AnimationTimer(Timer::from_seconds(0.25, TimerMode::Repeating)),
         Player,
         Collider,
     ));
@@ -213,8 +250,7 @@ fn maybe_spawn_meteor(
     difficulty: Res<Difficulty>,
     window: Query<&Window>,
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    meteor_texture: Res<MeteorSmall>,
     mut rng: Query<&mut RngComponent, With<Player>>,
 ) {
     let mut c_rng = rng.single_mut();
@@ -230,15 +266,18 @@ fn maybe_spawn_meteor(
                 .normalize()
                     * BALL_SPEED,
             ),
-            MaterialMesh2dBundle {
-                mesh: meshes.add(Circle::default()).into(), // TODO this seems silly, re-use?
-                material: materials.add(BALL_COLOR),
+            SpriteSheetBundle {
                 transform: Transform::from_translation(Vec3::new(
                     c_rng.i32((LEFT_WALL as i32)..(RIGHT_WALL as i32)) as f32,
                     window.single().height() / 2.,
                     1.0,
                 ))
-                .with_scale(Vec2::splat(BALL_DIAMETER).extend(1.)),
+                .with_scale(Vec2::splat(SMALL_METEOR_SCALE).extend(1.)),
+                texture: meteor_texture.0.clone(),
+                // sprite: Sprite {
+                //     color: PADDLE_COLOR,
+                //     ..default()
+                // },
                 ..default()
             },
         ));
@@ -292,9 +331,11 @@ fn check_for_collisions(
 
     // check collision with walls
     for (e, other_transform) in &collider_query {
-        let was_collision =
-            BoundingCircle::new(other_transform.translation.truncate(), BALL_DIAMETER / 2.)
-                .intersects(&player_bb);
+        let was_collision = Aabb2d::new(
+            other_transform.translation.truncate(),
+            (other_transform.scale.truncate() * SMALL_METEOR_VEC) / 2.,
+        )
+        .intersects(&player_bb);
 
         if was_collision {
             info!("Collision!");
