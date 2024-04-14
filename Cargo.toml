@@ -13,3 +13,6 @@ rust-analyzer = "0.0.1"
 
 [profile.dev.package."*"]
 opt-level = 3
+
+[target.wasm32-unknown-unknown]
+runner = "wasm-server-runner"
